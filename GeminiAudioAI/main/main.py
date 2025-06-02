@@ -46,7 +46,9 @@ if __name__ == "__main__":
     prompt_manager = LLangC_Prompt_Manager(version=args.prompt_version)
     prompt_manager.load_prompt_name()
     prompt_manager.get_llang_chain_access()
-    prompt_text = prompt_manager.prompt_template  # Get the prompt string
+    # Get the prompt template as text/str
+    prompt_text = prompt_manager.prompt_template
+
 
     main = AudioLoop(video_mode=args.mode)
     main.model_type = args.model_type
