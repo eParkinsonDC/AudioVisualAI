@@ -1,0 +1,30 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+select = ["E", "F", "I", "B"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint]
+exclude = ["venv", ".venv", "build", "dist"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[tool.ruff.mccabe]
+max-complexity = 10
+
+[tool.ruff.isort]
+known-first-party = ["geminiaudioai"]
+combine-as-imports = true
+
+[tool.ruff.per-file-ignores]
+"tests/*" = ["D", "S101"]
+
+# pyproject.toml (if using Poetry)
+[tool.poetry.group.dev.dependencies]
+black = "^24.0.0"
