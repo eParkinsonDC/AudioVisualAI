@@ -5,6 +5,7 @@ import os
 import re
 import time
 import traceback
+import shutil
 
 import cv2
 import mss
@@ -82,6 +83,7 @@ class AudioLoop:
         self.session = None
         self.client = None
         self.config = None
+        self.output_file_path = "output_from_ai.txt"
         self.model_type = 1
         self.model = None
         self.last_active = time.time()
@@ -129,9 +131,12 @@ class AudioLoop:
             raise ValueError("Prompt must be set before calling create_config()")
         tools = [
             types.Tool(google_search=types.GoogleSearch()),
+            types.Tool(code_execution=types.ToolCodeExecution()),
         ]
         self.config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
+            # Creates transcript that can be used to part text from output responsess
+            output_audio_transcription=types.AudioTranscriptionConfig(),
             media_resolution="MEDIA_RESOLUTION_MEDIUM",
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
@@ -191,27 +196,6 @@ class AudioLoop:
         """
 
         return re.sub(r"```(?:[a-zA-Z]*\\n)?(.*?)```", r"\1", text, flags=re.DOTALL)
-
-    def save_code_to_file(self, code, filename="output_from_ai.txt"):
-        """
-        Saves the provided code string to a file.
-
-        Args:
-            code (str): The code/content to be written to the file.
-            filename (str, optional): The name of the file to save the code to. Defaults to "output_from_ai.txt".
-
-        Raises:
-            Exception: If an error occurs while writing to the file.
-
-        Side Effects:
-            Writes the code to the specified file and prints a success or failure message.
-        """
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(code)
-            print(f"\nSaved AI code to {filename}\n")
-        except Exception as e:
-            print(f"Failed to save code: {e}")
 
     async def send_text(self):
         """
@@ -415,25 +399,107 @@ class AudioLoop:
             self.last_active = time.time()
             await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
 
+    def clear_output_file(self, filename=None):
+        """
+        Clears the output file specified by filename or by self.output_file_path if not provided.
+        """
+        if filename is None:
+            filename = self.output_file_path
+        output_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "outputs")
+        )
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, filename)
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                pass  # This just truncates the file
+            print(f"Cleared output file at {filepath}")
+        except Exception as e:
+            print(f"Failed to clear file: {e}")
+
+    def save_code_to_file(self, code, filename=None, mode="a"):
+        if filename is None:
+            filename = self.output_file_path
+        output_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "outputs")
+        )
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, filename)
+
+        # Read the last character in the file to decide on spacing (only if file exists and is not empty)
+        last_char = ""
+        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+            with open(filepath, "rb") as f:
+                f.seek(-1, os.SEEK_END)
+                last_char = f.read(1).decode("utf-8", errors="ignore")
+
+        # If last character is not a space or newline, insert a space
+        needs_space = last_char not in {"", " ", "\n"}
+
+        code = code.strip()
+        if not code:
+            return
+
+        code_to_write = ""
+        if needs_space:
+            code_to_write += " "
+
+        code_to_write += code
+
+        # Only append a newline if the string ends with . ? or !
+        if re.search(r"[.?!]$", code):
+            code_to_write += "\n"
+
+        try:
+            with open(filepath, mode, encoding="utf-8") as f:
+                f.write(code_to_write)
+        except Exception as e:
+            print(f"Failed to save code: {e}")
+
+
+    def get_all_lines_from_output(self, filename=None):
+        # Default to self.output_file_path if not provided
+        if filename is None:
+            filename = self.output_file_path
+
+        # If filename is not absolute, use outputs directory
+        if not os.path.isabs(filename):
+            output_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "outputs")
+            )
+            filepath = os.path.join(output_dir, filename)
+        else:
+            filepath = filename
+
+        if not os.path.exists(filepath):
+            print(f"No output file found at {filepath}")
+            return []
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                lines = [line.rstrip("\n") for line in f]
+            term_width = shutil.get_terminal_size((80, 20)).columns  # Default to 80 if unknown
+
+            # Color codes
+            color = "\033[36m"   # Cyan
+            reset = "\033[0m"
+
+            print(f"\n{color}{'-------------------------------------- Start of Response --------------------------------------'.center(term_width)}{reset}\n")
+            for n, line in enumerate(lines):
+                print(f"{color}{str(n+1).rjust(3)}. {line.center(term_width-7)}{reset}")
+            print(f"\n{color}{'-------------------------------------- End of Response --------------------------------------'.center(term_width)}{reset}\n")
+            return lines
+        except Exception as e:
+            print(f"Failed to read file: {e}")
+            return []
+
     async def receive_audio(self):
-        """
-        Asynchronously receives audio and text responses from the
-        session, processes usage metadata,
-        handles incoming audio data, and prints or saves code/text responses.
-        Continuously listens for responses from the session:
-            - Tracks and prints token usage if available.
-            - Queues incoming audio data for further processing.
-            - Detects and extracts code blocks
-                from text responses, printing and saving them.
-            - Prints regular text responses to the console.
-            - Clears the audio input queue after each response batch.
-        Handles cancellation and logs any exceptions
-        encountered during execution.
-        """
         try:
             while True:
                 turn = self.session.receive()
+                last_text = None  # For final, if needed
                 async for response in turn:
+                    # Usage tracking (if present)
                     if (
                         self.token_tracker
                         and hasattr(response, "usage_metadata")
@@ -441,31 +507,49 @@ class AudioLoop:
                     ):
                         self.token_tracker.add_usage(response.usage_metadata)
                         print(self.token_tracker.summary())
-                    if hasattr(response, "data") and response.data:
 
+                    # Audio chunk for playback
+                    if hasattr(response, "data") and response.data:
                         self.audio_in_queue.put_nowait(response.data)
                         continue
 
+                    # Handle Gemini output_transcription as text (save all partials)
+                    server_content = getattr(response, "server_content", None)
+                    if server_content:
+                        output_trans = getattr(
+                            server_content, "output_transcription", None
+                        )
+                        if output_trans:
+                            text = getattr(output_trans, "text", None)
+                            if text:
+                                last_text = text
+                                # Print and SAVE every partial as a new line
 
-                    text = getattr(response, "text", None)
+                                self.save_code_to_file(
+                                    text, filename=self.output_file_path, mode="a"
+                                )
+                            continue  # Don't fall through to .text
 
-                    if text:
-                        if "```" in text:
-                            code = self.strip_code_blocks(text)
-                            print("\n AI provided code:\n")
-                            print(code)
-                            print("\n" + "=" * 50 + "\n")
-                            self.save_code_to_file(code)
-                        else:
-                            print(text, end="")
+                    # Fallback: plain text (for non-audio responses)
+                    if hasattr(response, "text") and response.text:
+                        print(response.text, end="")
+                        self.save_code_to_file(
+                            response.text, filename=self.output_file_path, mode="a"
+                        )
 
+                # Optionally, print/save the last partial as "final" after each turn
+                if last_text or getattr(response, "turn_complete", None):
+
+                    self.get_all_lines_from_output()
+
+                # After each turn, clear the input queue to discard stale audio if interrupted
                 while not self.audio_in_queue.empty():
                     self.audio_in_queue.get_nowait()
 
         except asyncio.CancelledError:
             print("receive_audio cancelled cleanly.")
         except Exception as e:
-            print(f" Error in receive_audio: {e}")
+            print(f"Error in receive_audio: {e}")
 
     async def play_audio(self):
         """
@@ -502,6 +586,7 @@ class AudioLoop:
             ExceptionGroup: If any exceptions occur within the task group, they are handled and printed.
         """
         try:
+            self.clear_output_file(self.output_file_path)
             self.create_client()
             if self.model is None:
                 if self.create_model():
