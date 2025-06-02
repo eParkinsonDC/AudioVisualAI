@@ -1,5 +1,5 @@
 import os
-
+import sys
 from langsmith import Client
 
 
@@ -86,7 +86,7 @@ class LLangC_Prompt_Manager:
         }
         self.prompt_name = prompt_version_map[self.version]
         assert self.prompt_name.startswith("gemi")
-        print(f"Prompt name set to: {self.prompt_name}")
+
 
         # Use self.client here!
         if not self.client:
@@ -104,22 +104,19 @@ class LLangC_Prompt_Manager:
 
         prompt_last_comm_hash = prompt_dict.get("last_commit_hash", None)
         if prompt_last_comm_hash:
-            print(
-                f"Prompt last commit hash from LangChain: \n \
-                {prompt_last_comm_hash}"
-            )
+
             self.prompt_identifier = self.prompt_name + ":" + prompt_last_comm_hash
             prompt_pulled = self.client.pull_prompt(
-            prompt_identifier=self.prompt_identifier, include_model=False
-        ).get_prompts()[0][0]
+                prompt_identifier=self.prompt_identifier, include_model=False
+            ).get_prompts()[0][0]
             self.prompt = prompt_pulled
             self.prompt_template = prompt_pulled.prompt.template
-            print("Prompt Template loaded", self.prompt_template)
+            print("Prompt Template loaded with name", self.prompt_name)
 
         else:
             print("No prompt last commit hash found from LangChain.")
-
-
+            print("...Exiting...")
+            sys.exit(0)
 
 
 # Usage example

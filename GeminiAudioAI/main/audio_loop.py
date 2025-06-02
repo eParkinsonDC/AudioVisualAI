@@ -175,7 +175,7 @@ class AudioLoop:
         self.model = model_map.get(self.model_type)
         if not self.model:
             raise ValueError(f"Unknown model_type: {self.model_type}")
-        print(f"Using model: {self.model}")
+        print(f"Using model: {self.model.split("/")[-1]}")
         return True
 
     def strip_code_blocks(self, text):
@@ -228,7 +228,7 @@ class AudioLoop:
         while True:
             text = await asyncio.to_thread(input, "message > ")
             if text.strip().lower() in quit_commands:
-                print("\n👋 Quit command received. Ending session...")
+                print("\n   Quit command received. Ending session...")
                 break
             self.last_active = time.time()
             await self.session.send(input=text or ".", end_of_turn=True)
@@ -442,29 +442,30 @@ class AudioLoop:
                         self.token_tracker.add_usage(response.usage_metadata)
                         print(self.token_tracker.summary())
                     if hasattr(response, "data") and response.data:
+
                         self.audio_in_queue.put_nowait(response.data)
                         continue
-                    parts = getattr(response, "parts", [])
-                    for part in parts:
-                        text = getattr(part, "text", None)
-                        breakpoint()
-                        if text:
-                            if "```" in text:
-                                code = self.strip_code_blocks(text)
-                                print("\n📄 AI provided code:\n")
-                                print(code)
-                                print("\n" + "=" * 50 + "\n")
-                                self.save_code_to_file(code)
-                            else:
-                                print(text, end="")
+
+
+                    text = getattr(response, "text", None)
+
+                    if text:
+                        if "```" in text:
+                            code = self.strip_code_blocks(text)
+                            print("\n AI provided code:\n")
+                            print(code)
+                            print("\n" + "=" * 50 + "\n")
+                            self.save_code_to_file(code)
+                        else:
+                            print(text, end="")
 
                 while not self.audio_in_queue.empty():
                     self.audio_in_queue.get_nowait()
 
         except asyncio.CancelledError:
-            print("🔌 receive_audio cancelled cleanly.")
+            print("receive_audio cancelled cleanly.")
         except Exception as e:
-            print(f"❌ Error in receive_audio: {e}")
+            print(f" Error in receive_audio: {e}")
 
     async def play_audio(self):
         """
@@ -504,10 +505,10 @@ class AudioLoop:
             self.create_client()
             if self.model is None:
                 if self.create_model():
-                    print("Model created is True.")
+                    print("Model is created.")
             if self.config is None:
                 if self.create_config():
-                    print("Model config is True.")
+                    print("Model config is setup.")
 
             async with (
                 self.client.aio.live.connect(
@@ -539,5 +540,5 @@ class AudioLoop:
         except ExceptionGroup as eg:
             self.audio_stream.close()
             for e in eg.exceptions:
-                print(f"❌ TaskGroup error: {e}")
+                print(f"TaskGroup error: {e}")
             traceback.print_exception(eg)
