@@ -3,9 +3,9 @@ import base64
 import io
 import os
 import re
+import shutil
 import time
 import traceback
-import shutil
 
 import cv2
 import mss
@@ -13,14 +13,11 @@ import PIL.Image
 import pyaudio
 from google import genai
 from google.genai import types
+
 from prompt_manager import LLangC_Prompt_Manager
+from token_tracker import TokenTracker
 
-try:
-    from token_tracker import TokenTracker
-except ImportError:
-    TokenTracker = None
-    print("Warning: token_tracker module not found. Token tracking will be disabled.")
-
+# Defining Global Configuration values
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 SEND_SAMPLE_RATE = 16000
@@ -456,7 +453,6 @@ class AudioLoop:
         except Exception as e:
             print(f"Failed to save code: {e}")
 
-
     def get_all_lines_from_output(self, filename=None):
         # Default to self.output_file_path if not provided
         if filename is None:
@@ -478,16 +474,22 @@ class AudioLoop:
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 lines = [line.rstrip("\n") for line in f]
-            term_width = shutil.get_terminal_size((80, 20)).columns  # Default to 80 if unknown
+            term_width = shutil.get_terminal_size(
+                (80, 20)
+            ).columns  # Default to 80 if unknown
 
             # Color codes
-            color = "\033[36m"   # Cyan
+            color = "\033[36m"  # Cyan
             reset = "\033[0m"
 
-            print(f"\n{color}{'-------------------------------------- Start of Response --------------------------------------'.center(term_width)}{reset}\n")
+            print(
+                f"\n{color}{'-------------------------------------- Start of Response --------------------------------------'.center(term_width)}{reset}\n"
+            )
             for n, line in enumerate(lines):
                 print(f"{color}{str(n+1).rjust(3)}. {line.center(term_width-7)}{reset}")
-            print(f"\n{color}{'-------------------------------------- End of Response --------------------------------------'.center(term_width)}{reset}\n")
+            print(
+                f"\n{color}{'-------------------------------------- End of Response --------------------------------------'.center(term_width)}{reset}\n"
+            )
             return lines
         except Exception as e:
             print(f"Failed to read file: {e}")
@@ -616,7 +618,8 @@ class AudioLoop:
 
                 tg.create_task(self.receive_audio())
                 tg.create_task(self.play_audio())
-                tg.create_task(self.keep_alive(interval=120, idle_threshold=90))
+                tg.create_task(self.keep_alive(
+                    interval=120, idle_threshold=90))
 
                 await send_text_task
                 raise asyncio.CancelledError("User requested exit")

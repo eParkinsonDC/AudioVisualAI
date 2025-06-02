@@ -7,7 +7,6 @@ import sys
 from audio_loop import AudioLoop
 from dotenv import load_dotenv
 from prompt_manager import LLangC_Prompt_Manager
- 
 
 # Try importing token_tracker from project root
 try:
