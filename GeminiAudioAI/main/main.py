@@ -49,9 +49,15 @@ if __name__ == "__main__":
     # Get the prompt template as text/str
     prompt_text = prompt_manager.prompt_template
 
-
     main = AudioLoop(video_mode=args.mode)
+     
     main.model_type = args.model_type
+    print("-" * 50)
+
+    print(f"...Current arguments used...")
+    for k, v in args.__dict__.items():
+        print(f"{k}: '{v}' ")
+    print("-" * 50)
     main.prompt_version = args.prompt_version
     main.prompt = prompt_text
 

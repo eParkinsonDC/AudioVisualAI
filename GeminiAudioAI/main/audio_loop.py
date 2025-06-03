@@ -1,6 +1,8 @@
 import asyncio
 import base64
+import csv
 import io
+import mimetypes
 import os
 import re
 import shutil
@@ -8,14 +10,17 @@ import time
 import traceback
 
 import cv2
+import httpx
 import mss
 import PIL.Image
 import pyaudio
 from google import genai
 from google.genai import types
 
+
 from prompt_manager import LLangC_Prompt_Manager
 from token_tracker import TokenTracker
+
 
 # Defining Global Configuration values
 FORMAT = pyaudio.paInt16
@@ -84,6 +89,7 @@ class AudioLoop:
         self.model_type = 1
         self.model = None
         self.last_active = time.time()
+        self.uploaded_files = None
         self.awaiting_response = False
         self.unanswered_prompts = 0
         self.max_unanswered = 3
@@ -109,30 +115,71 @@ class AudioLoop:
                 api_key=os.environ.get("GEMINI_API_KEY"),
             )
 
-    def create_config(self):
+        return True
+
+    def sanitize_name(self, filename):
+        # Remove extension, convert to lowercase, replace non-allowed chars with dash, strip dashes
+        name = os.path.splitext(filename)[0].lower()
+        name = re.sub(
+            r"[^a-z0-9-]", "-", name
+        )  # only allow lowercase letters, numbers, dash
+        name = name.strip("-")
+        return name or "file"  # fallback
+
+    async def upload_all_files(self, files_dir="../files"):
+        os.makedirs(files_dir, exist_ok=True)
+
+        # --- Delete all files from Gemini client (ASYNC) ---
+        try:
+            print("Listing files on client for deletion...")
+            pager = await self.client.aio.files.list()
+
+            async for f in pager:
+                try:
+                    await self.client.aio.files.delete(name=f.name)
+                    print(f"Deleted file: {f.name}")
+                except Exception as e:
+                    print(f"Failed to delete file {f.name}: {e}")
+        except Exception as e:
+            print(f"Failed to list files on client: {e}")
+
+        tasks = []
+        for filename in os.listdir(files_dir):
+            file_path = os.path.join(files_dir, filename)
+            if os.path.isfile(file_path):
+                # Schedule the async upload
+                tasks.append(self.client.aio.files.upload(file=file_path))
+        # Await all uploads to finish
+        results = await asyncio.gather(*tasks)
+        print("All uploads complete!")
+
+        return results
+
+    def create_config(self, files=None):
         """
-        Creates and sets the configuration for live audio interaction.
-
-        This method initializes the `self.config` attribute with a `LiveConnectConfig` object,
-        specifying audio response modality, media resolution, speech and voice settings,
-        real-time input configuration, context window compression, tools, and system instruction
-        based on the current prompt.
-
-        Raises:
-            ValueError: If `self.prompt` is not set before calling this method.
-
-        Returns:
-            bool: True if the configuration is successfully created.
+        Creates and sets the configuration for live audio interaction,
+        optionally using uploaded files for retrieval.
         """
         if not self.prompt:
             raise ValueError("Prompt must be set before calling create_config()")
+        if files is None:
+            files = getattr(self, "uploaded_files", [])
+
+        # If you want to use the files for retrieval (if API supports)
+        retrieval_sources = []
+        for f in files:
+            # Depending on API: may need f.name, f.uri, or f.resource_name
+            retrieval_sources.append(types.File(name=f.name, mime_type="csv"))
+            # or types.RetrievalSource(uri=f.uri) etc
+
         tools = [
             types.Tool(google_search=types.GoogleSearch()),
             types.Tool(code_execution=types.ToolCodeExecution()),
         ]
+
         self.config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
-            # Creates transcript that can be used to part text from output responsess
+            enable_affective_dialog=True,
             output_audio_transcription=types.AudioTranscriptionConfig(),
             media_resolution="MEDIA_RESOLUTION_MEDIUM",
             speech_config=types.SpeechConfig(
@@ -590,6 +637,7 @@ class AudioLoop:
         try:
             self.clear_output_file(self.output_file_path)
             self.create_client()
+            self.uploaded_files = await self.upload_all_files()
             if self.model is None:
                 if self.create_model():
                     print("Model is created.")
@@ -618,8 +666,7 @@ class AudioLoop:
 
                 tg.create_task(self.receive_audio())
                 tg.create_task(self.play_audio())
-                tg.create_task(self.keep_alive(
-                    interval=120, idle_threshold=90))
+                tg.create_task(self.keep_alive(interval=60, idle_threshold=90))
 
                 await send_text_task
                 raise asyncio.CancelledError("User requested exit")
